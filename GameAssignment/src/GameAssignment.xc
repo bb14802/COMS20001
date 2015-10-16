@@ -115,11 +115,17 @@ void userAnt(chanend fromButtons, chanend toVisualiser, chanend toController) {
   toVisualiser <: userAntPosition;         //show initial position
   while (1) {
     fromButtons :> buttonInput; //expect values 13 and 14
-    ////////////////////////////////////////////////////////////
-    //
-    // !!! place code here for userAnt behaviour
-    //
-    /////////////////////////////////////////////////////////////
+    //userAnt behaviour
+    if (buttonInput == 13) {
+        attemptedAntPosition = (userAntPosition + 1) % 23;
+    } else {
+        attemptedAntPosition = (userAntPosition - 1) % 23;
+    }
+    toController <: attemptedAntPosition;
+    toController :> moveForbidden;
+    if (!moveForbidden) {
+        userAntPosition = attemptedAntPosition;
+    }
     toVisualiser <: userAntPosition;
   }
 }
@@ -165,12 +171,13 @@ void controller(chanend fromAttacker, chanend fromUser) {
       /////////////////////////////////////////////////////////////
         break;
       case fromUser :> attempt:
-      /////////////////////////////////////////////////////////////
-      //
-      // !!! place your code here to give permission/deny user move
-      //
-      /////////////////////////////////////////////////////////////
-        break;
+      //userAnt permission/deny operation
+          if (attempt != lastReportedAttackerAntPosition) {
+              fromUser <: 0;
+              lastReportedUserAntPosition = attempt;
+          }
+          else fromUser <: 1;
+          break;
     }
   }
 }
