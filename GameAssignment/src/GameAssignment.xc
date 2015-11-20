@@ -119,7 +119,10 @@ void userAnt(chanend fromButtons, chanend toVisualiser, chanend toController) {
     if (buttonInput == 13) {
         attemptedAntPosition = (userAntPosition + 1) % 23;
     } else {
-        attemptedAntPosition = (userAntPosition - 1) % 23;
+        attemptedAntPosition = (userAntPosition - 1);
+        if (userAntPosition < 0) {
+            userAntPosition = 22;
+        }
     }
     toController <: attemptedAntPosition;
     toController :> moveForbidden;
