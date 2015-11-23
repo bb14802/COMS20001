@@ -7,8 +7,8 @@
 #include "pgmIO.h"
 #include "i2c.h"
 
-#define  IMHT 16                  //image height
-#define  IMWD 16                  //image width
+#define  IMHT 64                  //image height
+#define  IMWD 64                  //image width
 
 typedef unsigned char uchar;      //using uchar as shorthand
 
@@ -90,18 +90,23 @@ void worker(chanend toDist) { //first attempt at worker function, assuming all t
         }
         if ((valMap[x][y] == 255 && (count == 765 || count == 1020)) // 765 = 255*3, 1020 = 255*4 (given block is surrounded by 2/3 live pixels plus itself).
           ||(valMap[x][y] == 0   && count == 765))
-        {
-          val = 255;
-        }
-        else {
-          val = 0;
-        }
+            val = 255;
+        else
+            val = 0;
+
         toDist <: val;
       }
     }
   }
 }
 
+void initworker(chanend toDist[16]) {
+  par (int i = 0; i < 16; i++)
+  {
+    worker(toDist[i]);
+  }
+  return;
+}
 
 void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker, chanend fromButtons, chanend toLED)
 {
@@ -112,6 +117,7 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
 
   printf( "ProcessImage:Start, size = %dx%d\n", IMHT, IMWD );
   printf( "Waiting for Button Press...\n" );
+  printf("%d\n", sizeof(long));
 
 
   while (buttonval != 14) {
@@ -126,8 +132,9 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
   }
   while (1) {
     fromAcc :> tilt;
-    if (round == 200) {
+    if (tilt != 0) {
       toLED <: 0;
+      c_out <: 1;
       for( int y = 0; y < IMHT; y++ ) {
         for( int x = 0; x < IMWD; x++ ) {
           c_out <: valMap[x][y];
@@ -160,26 +167,28 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
 void DataOutStream(char outfname[], chanend c_in)
 {
   int res;
+  int ready;
   uchar line[ IMWD ];
   printf( "DataOutStream:Start...\n" );
-
-  //Open PGM file
-  res = _openoutpgm( outfname, IMWD, IMHT );
-  if( res ) {
-    printf( "DataOutStream:Error opening %s\n.", outfname );
-    return;
-  }
-   //Compile each line of the image and write the image line-by-line
-  for( int y = 0; y < IMHT; y++ ) {
-    for( int x = 0; x < IMWD; x++ ) {
-      c_in :> line[ x ];
+  while (1) {
+    c_in :> ready;
+    //Open PGM file
+    res = _openoutpgm( outfname, IMWD, IMHT );
+    if( res ) {
+      printf( "DataOutStream:Error opening %s\n.", outfname );
+      return;
     }
-    _writeoutline( line, IMWD );
+     //Compile each line of the image and write the image line-by-line
+    for( int y = 0; y < IMHT; y++ ) {
+      for( int x = 0; x < IMWD; x++ ) {
+        c_in :> line[ x ];
+      }
+      _writeoutline( line, IMWD );
+    }
+
+    //Close the PGM image
+    _closeoutpgm();
   }
-
-  //Close the PGM image
-  _closeoutpgm();
-
   printf( "DataOutStream:Done...\n" );
   return;
 }
@@ -259,11 +268,12 @@ int main(void) {
 
   chan c_inIO, c_outIO, c_control, c_workerComms, buttonToDist, distToLED;    //extend your channel definitions here
 
+
   par {
       on tile[0]:  i2c_master(i2c, 1, p_scl, p_sda, 10);   //server thread providing accelerometer data
       on tile[0]:  accelerometer(i2c[0],c_control);        //client thread reading accelerometer data
-      on tile[0]:  DataInStream("test.pgm", c_inIO);          //thread to read in a PGM image
-      on tile[0]:  DataOutStream("testout.pgm", c_outIO);       //thread to write out a PGM image
+      on tile[0]:  DataInStream("64x64.pgm", c_inIO);          //thread to read in a PGM image
+      on tile[0]:  DataOutStream("64x64_out.pgm", c_outIO);       //thread to write out a PGM image
       on tile[0]:  distributor(c_inIO, c_outIO, c_control, c_workerComms, buttonToDist, distToLED);//thread to coordinate work on image
       on tile[1]:  worker(c_workerComms);
       on tile[0]:  buttonListener(buttons, buttonToDist);
