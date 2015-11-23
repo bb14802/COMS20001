@@ -52,9 +52,7 @@ void DataInStream(char infname[], chanend c_out)
     _readinline( line, IMWD );
     for( int x = 0; x < IMWD; x++ ) {
       c_out <: line[ x ];
-//    printf( "-%4.1d ", line[ x ] ); //show image values
     }
-//  printf( "\n" );
   }
 
   //Close PGM image file
@@ -70,45 +68,55 @@ void DataInStream(char infname[], chanend c_out)
 // Currently the function just inverts the image
 //
 /////////////////////////////////////////////////////////////////////////////////////////
-void worker(chanend toDist) { //first attempt at worker function, assuming all tiles have a "border" of read-only tiles around them.
-  uchar valMap[IMWD][IMHT];
+void worker(chanend toDist, int id) { //first attempt at worker function, assuming all tiles have a "border" of read-only tiles around them.
+  const uchar HT = (IMHT/8)+2;
+  const uchar WD = IMWD;
+
+  uchar valMap[IMWD][(IMHT/8)+2];
+  uchar output[IMWD][IMHT/8];
+
   while (1) {
-    for( int y = 0; y < IMHT; y++ ) {
-      for( int x = 0; x < IMWD; x++ ) {
+    for( int y = 1; y < HT-1; y++ ) {
+      for( int x = 0; x < WD; x++ ) {
         toDist :> valMap[x][y];
       }
     }
+    printf("Worker %d recieved data\n", id);
     int count = 0;
-    uchar val;
-    for (int y = 0; y < IMHT; y++) {
-      for (int x = 0; x < IMWD; x++) {
+    for (int y = 1; y < (IMHT/8)+1; y++) {
+      for (int x = 0; x < WD; x++) {
         count = 0;
         for (int i = y-1; i <= y+1; i++) {
           for (int j = x-1; j <= x+1; j++) {
-            count += valMap[(j+IMWD)%IMWD][(i+IMWD)%IMWD];
+            count += valMap[(j+WD)%WD][i];
           }
         }
         if ((valMap[x][y] == 255 && (count == 765 || count == 1020)) // 765 = 255*3, 1020 = 255*4 (given block is surrounded by 2/3 live pixels plus itself).
           ||(valMap[x][y] == 0   && count == 765))
-            val = 255;
+            output[x][y-1] = 255;
         else
-            val = 0;
-
-        toDist <: val;
+            output[x][y-1] = 0;
       }
     }
+    printf("Worker %d completed computation\n", id);
+    for(int y = 0; y < IMHT/8; y++) {
+      for(int x = 0; x < IMWD; x++) {
+        toDist <: output[x][y];
+      }
+    }
+    printf("Worker %d finished\n", id);
   }
 }
 
-void initworker(chanend toDist[16]) {
-  par (int i = 0; i < 16; i++)
+void initWorker(chanend toDist[8]) {
+  par (int i = 0; i < 8; i++)
   {
-    worker(toDist[i]);
+    worker(toDist[i], i);
   }
   return;
 }
 
-void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker, chanend fromButtons, chanend toLED)
+void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker[8], chanend fromButtons, chanend toLED)
 {
   uchar buttonval = 0;
   uchar valMap[IMWD][IMHT];
@@ -117,8 +125,6 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
 
   printf( "ProcessImage:Start, size = %dx%d\n", IMHT, IMWD );
   printf( "Waiting for Button Press...\n" );
-  printf("%d\n", sizeof(long));
-
 
   while (buttonval != 14) {
     fromButtons :> buttonval;
@@ -130,6 +136,7 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
       c_in :> valMap[x][y];
     }
   }
+  printf("starting main loop\n");
   while (1) {
     fromAcc :> tilt;
     if (tilt != 0) {
@@ -142,20 +149,24 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker,
       }
       while (tilt != 0) fromAcc :> tilt;
     }
-
-    for( int y = 0; y < IMHT; y++ ) {
-      for( int x = 0; x < IMWD; x++ ) {
-        toWorker <: valMap[x][y];
+    printf("sending workers valmap\n");
+    for (int id = 0; id < 8; id++) { //iterate through each worker
+      for (int ln = (id*(IMHT/8))-1; ln < ((id+1)*(IMHT/8))+2; ln++) { //iterate through each of the lines that worker has
+        for (int c = 0; c < IMWD; c++) { //iterate through each cell of that line
+          toWorker[id] <: valMap[c][(ln+IMHT)%IMHT];
+        }
       }
     }
-
-    for( int y = 0; y < IMHT; y++ ) {
-      for( int x = 0; x < IMWD; x++ ) {
-        toWorker :> valMap[x][y];
+    printf("revieving workers valmap\n");
+    for (int id = 0; id < 8; id++) {
+      for( int y = 0; y < IMHT; y++ ) {
+        for( int x = 0; x < IMWD; x++ ) {
+          toWorker[id] :> valMap[x][y];
+        }
       }
     }
     round++;
-    printf( "Round %d completed...\n", round );
+    printf( "\nRound %d completed...\n\n", round );
   }
 }
 
@@ -226,7 +237,6 @@ int showLEDs(port p, chanend fromDist) {
 void accelerometer(client interface i2c_master_if i2c, chanend toDist) {
   i2c_regop_res_t result;
   char status_data = 0;
-  int tilted = 0;
 
   // Configure FXOS8700EQ
   result = i2c.write_reg(FXOS8700EQ_I2C_ADDR, FXOS8700EQ_XYZ_DATA_CFG_REG, 0x01);
@@ -266,7 +276,7 @@ int main(void) {
 
   i2c_master_if i2c[1];               //interface to accelerometer
 
-  chan c_inIO, c_outIO, c_control, c_workerComms, buttonToDist, distToLED;    //extend your channel definitions here
+  chan c_inIO, c_outIO, c_control, c_workerComms[8], buttonToDist, distToLED;    //extend your channel definitions here
 
 
   par {
@@ -275,7 +285,7 @@ int main(void) {
       on tile[0]:  DataInStream("64x64.pgm", c_inIO);          //thread to read in a PGM image
       on tile[0]:  DataOutStream("64x64_out.pgm", c_outIO);       //thread to write out a PGM image
       on tile[0]:  distributor(c_inIO, c_outIO, c_control, c_workerComms, buttonToDist, distToLED);//thread to coordinate work on image
-      on tile[1]:  worker(c_workerComms);
+      on tile[1]:  initWorker(c_workerComms);
       on tile[0]:  buttonListener(buttons, buttonToDist);
       on tile[0]:  showLEDs(leds, distToLED);
   }
