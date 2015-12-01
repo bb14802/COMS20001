@@ -69,26 +69,21 @@ void DataInStream(char infname[], chanend c_out)
 //
 /////////////////////////////////////////////////////////////////////////////////////////
 void worker(chanend toDist, int id) { //first attempt at worker function, assuming all tiles have a "border" of read-only tiles around them.
-  const uchar HT = (IMHT/8)+2;
-  const uchar WD = IMWD;
-
   uchar valMap[IMWD][(IMHT/8)+2];
   uchar output[IMWD][IMHT/8];
-
   while (1) {
-    for( int y = 1; y < HT-1; y++ ) {
-      for( int x = 0; x < WD; x++ ) {
+    for( int y = 0; y < (IMHT/8)+2; y++ ) {
+      for( int x = 0; x < IMWD; x++ ) {
         toDist :> valMap[x][y];
       }
     }
-    printf("Worker %d recieved data\n", id);
     int count = 0;
     for (int y = 1; y < (IMHT/8)+1; y++) {
-      for (int x = 0; x < WD; x++) {
+      for (int x = 0; x < IMWD; x++) {
         count = 0;
         for (int i = y-1; i <= y+1; i++) {
           for (int j = x-1; j <= x+1; j++) {
-            count += valMap[(j+WD)%WD][i];
+            count += valMap[(j+IMWD)%IMWD][i];
           }
         }
         if ((valMap[x][y] == 255 && (count == 765 || count == 1020)) // 765 = 255*3, 1020 = 255*4 (given block is surrounded by 2/3 live pixels plus itself).
@@ -98,13 +93,11 @@ void worker(chanend toDist, int id) { //first attempt at worker function, assumi
             output[x][y-1] = 0;
       }
     }
-    printf("Worker %d completed computation\n", id);
     for(int y = 0; y < IMHT/8; y++) {
       for(int x = 0; x < IMWD; x++) {
         toDist <: output[x][y];
       }
     }
-    printf("Worker %d finished\n", id);
   }
 }
 
@@ -136,7 +129,6 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker[
       c_in :> valMap[x][y];
     }
   }
-  printf("starting main loop\n");
   while (1) {
     fromAcc :> tilt;
     if (tilt != 0) {
@@ -149,24 +141,21 @@ void distributor(chanend c_in, chanend c_out, chanend fromAcc, chanend toWorker[
       }
       while (tilt != 0) fromAcc :> tilt;
     }
-    printf("sending workers valmap\n");
-    for (int id = 0; id < 8; id++) { //iterate through each worker
-      for (int ln = (id*(IMHT/8))-1; ln < ((id+1)*(IMHT/8))+2; ln++) { //iterate through each of the lines that worker has
-        for (int c = 0; c < IMWD; c++) { //iterate through each cell of that line
+    for (int id = 0; id < 8; id++) {                                     //iterate through each worker
+      for (int ln = (id*(IMHT/8))-1; ln < ((id+1)*(IMHT/8))+1; ln++)    //iterate through each of the lines that worker has
+        for (int c = 0; c < IMWD; c++) {                                 //iterate through each cell of that line
           toWorker[id] <: valMap[c][(ln+IMHT)%IMHT];
         }
-      }
     }
-    printf("revieving workers valmap\n");
     for (int id = 0; id < 8; id++) {
-      for( int y = 0; y < IMHT; y++ ) {
+      for( int y = 0; y < IMHT/8; y++ ) {
         for( int x = 0; x < IMWD; x++ ) {
-          toWorker[id] :> valMap[x][y];
+          toWorker[id] :> valMap[x][((IMHT/8)*id)+y];
         }
       }
     }
     round++;
-    printf( "\nRound %d completed...\n\n", round );
+    printf( "Round %d completed...\n", round );
   }
 }
 
@@ -221,7 +210,6 @@ int showLEDs(port p, chanend fromDist) {
                //4th bit...red LED
 
   while (1) {
-      printf("newpattern\n");
       fromDist :> pattern;
       p <: pattern;
   }
